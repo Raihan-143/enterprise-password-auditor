@@ -5,7 +5,7 @@ USERS_FILE = "company_users.txt"
 WORDLIST_FILE = "audit_wordlist.txt"
 REPORT_FILE = "password_audit_report.txt"
 
-# Terminal Color Code
+#Terminal Colour Code
 RED = "\033[91m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -15,7 +15,6 @@ RESET = "\033[0m"
 
 def run_password_audit():
   timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
   header = (
       f"\n======================================================\n"
       f"     ENTERPRISE IDENTITY & PASSWORD AUDIT             \n"
@@ -25,44 +24,52 @@ def run_password_audit():
   )
   print(f"{BLUE}{header}{RESET}")
 
-  # Loading the dictionary words into memory using a hash map beforehand (for super-fast searching).
-  dictionary = {}
+  # Memory-safe: Fitting worker hashes into a small memory footprint (a few kilobytes of RAM).
+  user_hashes = {}
+  total_users = 0
+
+  with open(USERS_FILE, "r") as uf:
+    for line in uf:
+      line = line.strip()
+      if ":" in line:
+        total_users += 1
+        uname, uhash = line.split(":", 1)
+        user_hashes[uhash] = uname
+
+  target_hashes_set = set(user_hashes.keys())
+  cracked_users = {}
+  report_lines = [header]
+
+  # Streaming the dictionary line by line (preventing RAM overflow / DoS)
   with open(WORDLIST_FILE, "r", encoding="latin-1") as wf:
     for word in wf:
       clean_word = word.strip()
       w_hash = hashlib.sha256(clean_word.encode()).hexdigest()
-      dictionary[w_hash] = clean_word
 
-  #Now, the accounts of company employees are being audited.
-  total_users = 0
-  compromised_count = 0
-  report_lines = [header]
+      if w_hash in target_hashes_set:
+        compromised_user = user_hashes[w_hash]
+        if compromised_user not in cracked_users:
+          cracked_users[compromised_user] = clean_word
+          log = (
+              f"[CRITICAL: COMPROMISED] User: {compromised_user:<15} | Weak"
+              f" Password: [{clean_word}]"
+          )
+          print(f"{RED}{log}{RESET}")
+          report_lines.append(log + "\n")
 
-  with open(USERS_FILE, "r") as uf:
-    for line in uf:
-      if ":" not in line:
-        continue
-      total_users += 1
-      username, user_hash = line.strip().split(":", 1)
+  # Identifying those who are safe
+  for uhash, uname in user_hashes.items():
+    if uname not in cracked_users:
+      log = f"[SECURE: COMPLIANT]   User: {uname:<15} | Status: STRONG"
+      print(f"{GREEN}{log}{RESET}")
+      report_lines.append(log + "\n")
 
-      #Did the hash match the dictionary?া
-      if user_hash in dictionary:
-        compromised_count += 1
-        cracked_pass = dictionary[user_hash]
-        log = (
-            f"[CRITICAL: COMPROMISED] User: {username:<15} | Weak Password:"
-            f" [{cracked_pass}]"
-        )
-        print(f"{RED}{log}{RESET}")
-        report_lines.append(log + "\n")
-      else:
-        log = f"[SECURE: COMPLIANT]   User: {username:<15} | Status: STRONG"
-        print(f"{GREEN}{log}{RESET}")
-        report_lines.append(log + "\n")
-
-  # Security Health Score Calculation
+  # Health Score Calculation and Summary
+  compromised_count = len(cracked_users)
   secure_count = total_users - compromised_count
-  health_score = round((secure_count / total_users) * 100, 2)
+  health_score = (
+      round((secure_count / total_users) * 100, 2) if total_users > 0 else 0
+  )
 
   summary = (
       f"\n------------------------------------------------------\n"
@@ -78,13 +85,11 @@ def run_password_audit():
     print(f"{RED}{summary}{RESET}")
   else:
     print(f"{YELLOW}{summary}{RESET}")
-
   report_lines.append(summary)
 
-  # Automatically saving to the audit file
+  # Save to the audit file
   with open(REPORT_FILE, "w") as rf:
     rf.writelines(report_lines)
-
   print(f"{BLUE}[+] Full Audit Report saved to: {REPORT_FILE}{RESET}\n")
 
 
